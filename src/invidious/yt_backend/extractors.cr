@@ -662,7 +662,14 @@ private module Parsers
         metadata = item_contents.dig("metadata", "lockupMetadataViewModel")
         title = metadata.dig("title", "content").as_s
         # Contains the views of the video and the published time of the video.
-        metadata_parts = metadata.dig("metadata", "contentMetadataViewModel", "metadataRows", 0, "metadataParts").try &.as_a
+        # For collaboration videos (multiple authors), YouTube inserts an extra
+        # metadataRow holding the author names, which pushes the "views • published"
+        # parts out of row 0. So flatten the parts of every row instead of assuming
+        # they live in row 0. (Fixes iv-org/invidious#5740)
+        metadata_parts = metadata.dig?("metadata", "contentMetadataViewModel", "metadataRows")
+          .try &.as_a.flat_map { |row|
+            row.dig?("metadataParts").try(&.as_a) || [] of JSON::Any
+          }
 
         view_count_text = metadata_parts.try &.find { |item| item["icon"]?.nil? && item.dig?("text", "content").try &.as_s.includes?("views") }
           .try &.dig("text", "content").as_s
