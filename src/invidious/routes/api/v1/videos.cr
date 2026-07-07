@@ -92,6 +92,22 @@ module Invidious::Routes::API::V1::Videos
       caption = caption[0]
     end
 
+    # Route the caption content fetch through invidious-companion when one is
+    # configured: the companion fetches the timedtext base_url with a valid
+    # po_token, so it is not IP-blocked like Invidious's own server-side fetch.
+    # Mirrors the companion caption URLs already built in the player template.
+    # (tlang / translated captions fall through to the local handling below.)
+    if CONFIG.invidious_companion.present? && !tlang
+      invidious_companion = CONFIG.invidious_companion.sample
+      companion_url = String.build do |str|
+        str << invidious_companion.public_url
+        str << "/api/v1/captions/" << id
+        str << "?label=" << URI.encode_www_form(caption.name)
+        str << "&check=" << invidious_companion_encrypt(id)
+      end
+      return env.redirect companion_url
+    end
+
     if CONFIG.use_innertube_for_captions
       params = Invidious::Videos::Transcript.generate_param(id, caption.language_code, caption.auto_generated)
 
