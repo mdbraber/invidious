@@ -66,6 +66,37 @@ if [[ "$AFTER_PATCHES" -lt "$BEFORE_PATCHES" ]]; then
 fi
 git --no-pager log --oneline origin/master..HEAD
 
+# Dockerfile.nedworks is upstream's docker/Dockerfile minus the `crystal spec`
+# step. Regenerate it on every run: a hand-kept copy drifted on 2026-09-23
+# (stale Crystal/OpenSSL/Alpine, missing -no-pie so backtraces were `from ???`).
+echo "==> syncing docker/Dockerfile.nedworks with docker/Dockerfile"
+awk '/^RUN crystal spec /{skip=1; next}
+     skip && /^[[:space:]]*$/{skip=0; next}
+     skip{next}
+     {print}' docker/Dockerfile > docker/Dockerfile.nedworks
+if grep -q "crystal spec" docker/Dockerfile.nedworks; then
+    echo "!! could not strip the crystal spec step; upstream Dockerfile changed shape." >&2
+    echo "   Fix docker/Dockerfile.nedworks by hand, commit, and re-run." >&2
+    git checkout -- docker/Dockerfile.nedworks
+    exit 1
+fi
+if [[ -n "$(git status --porcelain docker/Dockerfile.nedworks)" ]]; then
+    git --no-pager diff --stat docker/Dockerfile.nedworks
+    git commit -q -m "docker: sync Dockerfile.nedworks with upstream docker/Dockerfile" \
+        docker/Dockerfile.nedworks
+    echo "    committed Dockerfile.nedworks sync"
+else
+    echo "    already in sync"
+fi
+
+# TAG is per day, so a second build on the same day would take the tag away
+# from the image that is running now — and with it the rollback target.
+if OLD_ID=$(docker image inspect -f '{{.Id}}' "$TAG" 2>/dev/null); then
+    BACKUP="${TAG}-prev-$(cut -c8-19 <<<"$OLD_ID")"
+    docker tag "$TAG" "$BACKUP"
+    echo "==> $TAG already exists; kept the old image as $BACKUP (rollback target)"
+fi
+
 echo "==> building $TAG (crystal static release; takes ~10 min)"
 DOCKER_BUILDKIT=1 docker build \
     -f docker/Dockerfile.nedworks \
@@ -107,4 +138,5 @@ cat <<MSG
 ==> done. $TAG deployed and verified.
     Patches carried: $AFTER_PATCHES (see git log origin/master..$BRANCH)
     Rollback: point image: in $COMPOSE at a previous tag + \`up -d invidious\`.
+    ${BACKUP:+Same-day previous image: $BACKUP}
 MSG
